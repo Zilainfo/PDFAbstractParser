@@ -3,6 +3,7 @@ using OfficeOpenXml;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using UglyToad.PdfPig;
@@ -87,6 +88,7 @@ namespace ConsoleApp
                     topic.PresentationAbstract = PostprocessingText(m.Groups["topic"].Value);
 
 
+
                     string[] splitedMatches = new string[2];
 
 
@@ -101,43 +103,127 @@ namespace ConsoleApp
                         splitedMatches[1] = PostprocessingText(m.Groups["Affiliation"].Value);
                     }
 
-
-
-                    var affiliations = Regex.Matches(splitedMatches[1], @"(?<Name>\d[A-Z][\s\S]*?,(?<place>[\s\S]*?))\n", options);
-                    var names = Regex.Split(splitedMatches[0], @"(?<Name>[\w \s]+,)", options);
-
-
-                    foreach (string name in splitedMatches[0].Split(','))
+                    bool indexOnEnd = Regex.IsMatch(splitedMatches[1], @"([\s\S]+?\d+?)(?:,|$)", options);
+                    bool withIndex = Regex.IsMatch(splitedMatches[1], @"(\d+?)", options);
+                    MatchCollection affiliations;
+                    MatchCollection names;
+                    //if Index on start
+                    if (!indexOnEnd && withIndex)
                     {
-                        Participant participant = new Participant();
+                        //Add new lane
+                        splitedMatches[1] = Regex.Replace("1" + splitedMatches[1], @"(\d+[\s\S]+?)", "\n$1") + "\n";
+                        splitedMatches[1] += "\n";
+                        splitedMatches[1] = splitedMatches[1];
+                        affiliations = Regex.Matches(splitedMatches[1], @"(?<index>\d+)(?<afilation>[\s\S]+?)(,|$)(?<place>[\s\S]+?)(\n|$)", options);
+                        names = Regex.Matches(splitedMatches[0], @"(?<name>[\s\S]+?)(?<index>[,\d]+)(?:,|$)", options);
 
-                        if (affiliations.Count == 0)
+                        foreach (Match name in names)
                         {
-                            splitedMatches[1] = splitedMatches[1].Trim('\n');
-                            var r = Regex.Match(splitedMatches[1], @"(?<Name>[A-Z][\s\S]*?,)(?<Place>[\s\S]*)");
+                            Match res = affiliations[0];
+                            Participant participant = new Participant();
 
-
-                            if (r.Success)
+                            if (Regex.IsMatch(name.Groups["name"].Value, @","))
                             {
-                                participant.PersonsLocation = r.Groups["Place"].Value;
-                                participant.AffiliationNames = r.Groups["Name"].Value.Trim(',');
+                                MatchCollection grpNames = Regex.Matches(name.Groups["name"].Value, @"([\s\S] +?)", options);
+                                MatchCollection grpIndex = Regex.Matches(name.Groups["index"].Value, @"([\s\S] +?)", options);
+                                int i = 0;
+                                foreach (Match grpInd in grpIndex)
+                                {
+                                    try
+                                    {
+                                        res = (from match in affiliations
+                                               where match.Groups["index"].Value.Equals(grpInd.Groups["index"].Value)
+                                               select match).Single();
+                                    }
+                                    catch
+                                    {
+
+                                    }
+
+                                    participant.Name = grpNames[i++].Groups["name"].Value;
+                                    participant.PersonsLocation = res.Groups["place"].Value.TrimEnd().TrimEnd(',').Replace("and", "");
+                                    participant.AffiliationNames = res.Groups["afilation"].Value;
+                                    topic.Participants.Add(participant);
+                                }
                             }
                             else
                             {
-                                participant.AffiliationNames = PostprocessingText(m.Groups["Affiliation"].Value);
+
+                                try
+                                {
+                                    res = (from match in affiliations
+                                           where match.Groups["index"].Value.Equals(name.Groups["index"].Value)
+                                           select match).Single();
+                                }
+                                catch
+                                {
+
+                                }
+
+                                participant.Name = name.Groups["name"].Value;
+                                participant.PersonsLocation = res.Groups["place"].Value.TrimEnd().TrimEnd(',').Replace("and", "");
+                                participant.AffiliationNames = res.Groups["afilation"].Value;
+                                topic.Participants.Add(participant);
                             }
                         }
-                        else
+
+                    }
+                    else if (indexOnEnd && withIndex)
+                    {
+                        //Add new lane
+                        /*    splitedMatches[1] = Regex.Replace(splitedMatches[1], @"(\d+?)(?:,|$)", "\n$1");*/
+                        affiliations = Regex.Matches(splitedMatches[1], @"(?<afilation>[\s\S]+?)(?<index>[,\d]+)(?:,|$)", options);
+                        names = Regex.Matches(splitedMatches[0], @"(?<name>[\s\S]+?)(?<index>[,\d]+)(?:,|$)", options);
+
+                        foreach (Match name in names)
                         {
+                            Participant participant = new Participant();
+                            Match res = affiliations[0];
 
-                            participant.PersonsLocation = splitedMatches[1];
-                            participant.AffiliationNames = splitedMatches[1];
+                            try
+                            {
+                                res = (from match in affiliations
+                                       where match.Groups["index"].Value.Equals(name.Groups["index"].Value)
+                                       select match).Single();
+                            }
+                            catch
+                            {
 
+                            }
+
+                            participant.Name = name.Groups["name"].Value;
+                            participant.PersonsLocation = res.Groups["place"].Value.TrimEnd().TrimEnd(',').Replace("and", "");
+                            participant.AffiliationNames = res.Groups["afilation"].Value;
+                            topic.Participants.Add(participant);
                         }
-                        participant.Name = name;
-                        participant.PersonsLocation = splitedMatches[1];
-                        participant.AffiliationNames = splitedMatches[1];
-                        topic.Participants.Add(participant);
+
+                    }
+                    else
+                    {
+                        affiliations = Regex.Matches(splitedMatches[1], @"(?<Name>\d[A-Z][\s\S]*?,(?<place>[\s\S]*?))\n", options);
+
+
+                        foreach (string name in splitedMatches[0].Split(','))
+                        {
+                            Participant participant = new Participant();
+                            var r = Regex.Match(splitedMatches[1], @"(?<afilation>[\s\S]+?),(?<place>(?:[\s\S]+?)|)(?:$|\n)", options);
+                            if (r.Success)
+                            {
+                                participant.Name = name;
+                                participant.PersonsLocation = r.Groups["place"].Value;
+                                participant.AffiliationNames = r.Groups["afilation"].Value;
+                                topic.Participants.Add(participant);
+                            }
+                            else
+                            {
+
+                                participant.Name = name;
+                                participant.AffiliationNames = splitedMatches[1];
+                                topic.Participants.Add(participant);
+                            }
+                        }
+
+
                     }
 
                     topics.Add(topic);
@@ -228,7 +314,7 @@ namespace ConsoleApp
             {
                 stringBuilder.Append(m.Value);
             }
-            return stringBuilder.ToString();
+            return Regex.Replace(stringBuilder.ToString(), @"(\d+www\.[\s\S]+?2018)", "");
         }
 
 
